@@ -1,6 +1,13 @@
 use rand::prelude::*;
 use std::fmt;
 
+use std::clone::Clone;
+
+pub mod my_thread;
+
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 #[derive(Clone, Copy, PartialEq)]
 enum Player {
     X,
@@ -103,4 +110,28 @@ fn main() {
         }
     }
     println!("{}", game);
+
+    let mut number = Arc::new(Mutex::new(5));
+
+    let number1 = number.clone();
+
+    let thread = thread::spawn(move || {
+        if let Ok(mut lock) = number1.lock() {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            println!("hello, thread: {}", lock);
+            *lock += 1;
+        }
+    });
+
+    let number2 = number.clone();
+
+    let thread2 = thread::spawn(move || {
+        if let Ok(mut lock) = number2.lock() {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            println!("hello, thread: {}", lock);
+        }
+    });
+
+    thread.join();
+    thread2.join();
 }
