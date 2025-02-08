@@ -132,6 +132,8 @@ fn main() {
         }
     });
 
+    // small change
+
     thread.join();
     thread2.join();
 }
