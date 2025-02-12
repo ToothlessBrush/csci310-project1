@@ -1,14 +1,11 @@
 use rand::prelude::*;
 use std::fmt;
-
 use std::clone::Clone;
-
-pub mod my_thread;
-
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Player {
     X,
     O,
@@ -22,64 +19,72 @@ struct Game {
 
 impl Game {
     fn new() -> Self {
+        // Randomly choose a starting player.
+        let mut rng = rand::thread_rng();
+        let starting_player = if rng.gen_bool(0.5) {
+            Player::X
+        } else {
+            Player::O
+        };
+
+        println!("Random starting player: {:?}", starting_player);
+
         Game {
             grid: [[None; 3]; 3],
-            current_player: Player::X,
+            current_player: starting_player,
         }
     }
 
+    /// Attempts to play a turn at (x, y). If the cell is free, mark it and switch the turn.
     fn play_turn(&mut self, x: usize, y: usize) -> bool {
         if self.grid[x][y].is_none() {
             self.grid[x][y] = Some(self.current_player);
-            // switch player
-            if self.current_player == Player::X {
-                self.current_player = Player::O;
+            self.current_player = if self.current_player == Player::X {
+                Player::O
             } else {
-                self.current_player = Player::X;
-            }
+                Player::X
+            };
             return true;
         }
         false
     }
 
+    /// Check rows, columns, and diagonals for a winner.
     fn check_win(&self) -> Option<Player> {
         let grid = self.grid;
 
-        // check rows
+        // Check rows.
         for i in 0..3 {
             if grid[i][0].is_some() && grid[i][0] == grid[i][1] && grid[i][1] == grid[i][2] {
                 return grid[i][0];
             }
         }
 
-        // check columns
+        // Check columns.
         for i in 0..3 {
             if grid[0][i].is_some() && grid[0][i] == grid[1][i] && grid[1][i] == grid[2][i] {
                 return grid[0][i];
             }
         }
 
-        // check diagonals
+        // Check diagonals.
         if grid[0][0].is_some() && grid[0][0] == grid[1][1] && grid[1][1] == grid[2][2] {
             return grid[0][0];
         }
-
         if grid[0][2].is_some() && grid[0][2] == grid[1][1] && grid[1][1] == grid[2][0] {
             return grid[0][2];
         }
 
-        if grid
-            .iter()
-            .all(|row| row.iter().all(|&cell| cell.is_some()))
-        {
+        // If all cells are filled, it's a stalemate.
+        if grid.iter().all(|row| row.iter().all(|&cell| cell.is_some())) {
             return Some(Player::Stalemate);
         }
 
-        None // no winner
+        None // No winner.
     }
 }
 
-// function will run when println! is called on game
+// Function will run when println! is called on game
 impl fmt::Display for Game {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for row in self.grid {
@@ -98,42 +103,74 @@ impl fmt::Display for Game {
 }
 
 fn main() {
-    let mut rng = rand::thread_rng();
+    // Wrap the game in an Arc and Mutex to share among threads.
+    let game = Arc::new(Mutex::new(Game::new()));
 
-    let mut game = Game::new();
-    while game.check_win().is_none() {
-        let mut success = false;
-        while !success {
-            let x = rng.gen_range(0..3);
-            let y = rng.gen_range(0..3);
-            success = game.play_turn(x, y);
-        }
-    }
-    println!("{}", game);
+    // Spawn thread for Player X.
+    let game_for_x = Arc::clone(&game);
+    let handle_x = thread::spawn(move || {
+        let mut rng = rand::thread_rng();
+        loop {
+            let mut game = game_for_x.lock().unwrap();
 
-    let mut number = Arc::new(Mutex::new(5));
+            // If game over, print final board and break.
+            if let Some(winner) = game.check_win() {
+                println!("Final board:\n{}", *game);
+                if winner == Player::Stalemate {
+                    println!("Game over: Stalemate!");
+                } else {
+                    println!("Game over: {:?} wins!", winner);
+                }
+                break;
+            }
 
-    let number1 = number.clone();
+            // Only proceed if it's Player X's turn.
+            if game.current_player != Player::X {
+                drop(game); // release lock before sleeping
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
 
-    let thread = thread::spawn(move || {
-        if let Ok(mut lock) = number1.lock() {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            println!("hello, thread: {}", lock);
-            *lock += 1;
+            // Try a random move until successful.
+            let mut success = false;
+            while !success {
+                let x = rng.gen_range(0..3);
+                let y = rng.gen_range(0..3);
+                success = game.play_turn(x, y);
+            }
+            println!("(X moved) Board now:\n{}", *game);
         }
     });
 
-    let number2 = number.clone();
+    // Spawn thread for Player O.
+    let game_for_o = Arc::clone(&game);
+    let handle_o = thread::spawn(move || {
+        let mut rng = rand::thread_rng();
+        loop {
+            let mut game = game_for_o.lock().unwrap();
 
-    let thread2 = thread::spawn(move || {
-        if let Ok(mut lock) = number2.lock() {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            println!("hello, thread: {}", lock);
+            // Check for game over without binding the winner.
+            if game.check_win().is_some() {
+                break;
+            }
+
+            if game.current_player != Player::O {
+                drop(game);
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+
+            let mut success = false;
+            while !success {
+                let x = rng.gen_range(0..3);
+                let y = rng.gen_range(0..3);
+                success = game.play_turn(x, y);
+            }
+            println!("(O moved) Board now:\n{}", *game);
         }
     });
 
-    // small change
-
-    thread.join();
-    thread2.join();
+    // Wait for both threads to finish.
+    handle_x.join().unwrap();
+    handle_o.join().unwrap();
 }
